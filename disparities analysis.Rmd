@@ -1,0 +1,98 @@
+---
+title: "disparities analysis"
+author: "Byron Rice"
+date: "2023-04-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(rstatix)
+library(dplyr)
+library(ggplot2)
+library(performance)
+library(tidyverse)
+library(ggpubr)
+
+data <- read.csv("project data exported from v02_dataAnalysis.csv")
+```
+
+```{r}
+head(data)
+```
+
+```{r}
+# linear model exploring unadjusted relationship between PM2.5 and proportion white
+m1 <- lm(PM2.5.ug_m3_LC~PROP_WH.percent, data=data)
+summary(m1)
+```
+
+```{r}
+# linear model exploring association between PM2.5 and proportion white, controlling for education, per-capita income, and prop urban
+
+m2 <- lm(PM2.5.ug_m3_LC~PROP_WH.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent, data=data)
+summary(m2)
+```
+```{r}
+mb <- lm(PM2.5.ug_m3_LC~PROP_BLKAA.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent+POPDENS.ppl_m2, data=data)
+summary(mb)
+check_model(mb)
+```
+
+```{r}
+check_model(m2)
+```
+
+```{r}
+# reshape data to calculate population-weighted averages
+
+data_long <- data %>% pivot_longer(cols=c(POPWH.ppl, POPBLKAA.ppl, POPNATIVE.ppl, POPASIAN.ppl, POPNATIVEISL.ppl), names_to = "racial_group", values_to = "count.ppl")
+data_long$racial_group <- as.factor(data_long$racial_group)
+```
+
+```{r}
+# calculate population-weighted averages
+
+data_long <- data_long %>% group_by(racial_group) %>% mutate(sum(count.ppl))
+
+data_long$frac_pm25 <- (data_long$count.ppl/data_long["sum(count.ppl)"])*data_long$PM2.5.ug_m3_LC
+
+data_long <- as.data.frame(data_long) # correct issue with some sort of nesting of columns...
+
+data_long %>% group_by(racial_group) %>% summarize(sum(frac_pm25))
+
+```
+
+```{r}
+# fit linear model to check anova assumptions (with weights)
+
+m3 <- lm(PM2.5.ug_m3_LC~racial_group, data = data_long, weights = count.ppl)
+summary(m3)
+```
+
+```{r}
+# Compute Shapiro-Wilk test of normality (doesn't work because size of dataset)
+shapiro_test(residuals(m3))
+```
+
+```{r}
+ggqqplot(data_long, "PM2.5.ug_m3_LC", facet.by = "racial_group")
+```
+```{r}
+# homogeneity of variance
+plot(m3, 1)
+```
+
+
+```{r}
+m4 <- aov(PM2.5.ug_m3_LC~racial_group, data = data_long, weights = count.ppl)
+summary(m4)
+```
+
+```{r}
+TukeyHSD(m4)
+```
+
+
+
