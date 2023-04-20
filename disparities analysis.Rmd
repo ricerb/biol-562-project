@@ -31,7 +31,7 @@ summary(m1)
 ```{r}
 # linear model exploring association between PM2.5 and proportion white, controlling for education, per-capita income, and prop urban
 
-m2 <- lm(PM2.5.ug_m3_LC~PROP_WH.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent, data=data)
+m2 <- lm(PM2.5.ug_m3_LC~PROP_WH.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent, data=data) # swap in log-population density for prop_urban
 summary(m2)
 ```
 ```{r}
@@ -79,6 +79,7 @@ shapiro_test(residuals(m3))
 ```{r}
 ggqqplot(data_long, "PM2.5.ug_m3_LC", facet.by = "racial_group")
 ```
+
 ```{r}
 # homogeneity of variance
 plot(m3, 1)
@@ -91,8 +92,22 @@ summary(m4)
 ```
 
 ```{r}
+# Tukey post-hoc test doesn't work with population-weighted ANOVA
+
 TukeyHSD(m4)
 ```
 
+```{r}
+# logistic regression - a one-unit increase in ADI is associated with a small decrease in the odds of (beta = -8.09e-03, 95% CI [-9.02e-03, -7.17e-03], p < .001) a tract being in the top decile of PM2.5 concentrations
+data <- data %>% mutate(ntile(PM2.5.ug_m3_LC, 10))
+
+data$pm_90th <- ifelse(data["ntile(PM2.5.ug_m3_LC, 10)"] == 10, 1, 0)
+#quantile(data$TRACT_ADI.ave) > 0.9
+
+m5 <- glm(pm_90th ~ TRACT_ADI.ave, family = binomial, data = data)
+summary(m5)
+library(report)
+report(m5)
+```
 
 
