@@ -1,0 +1,917 @@
+---
+title: "DataAnalysis"
+author: "Nora Abbott"
+date: "2023-04-05"
+output: pdf_document
+---
+
+```{r library}
+# load packages
+library(ggplot2)
+library(ggthemes)
+library(RColorBrewer)
+library(moments) 
+library(rstatix)
+library(kableExtra)
+library(dplyr)
+library(ggpubr)
+library(tidyverse)
+library(coin)
+library(gridExtra)
+library(lmtest)
+library(GGally)
+library(ggformula)
+library(ggpmisc)
+library(car)
+library(readxl)
+library(vtable)
+library(gridExtra)
+library(cowplot)
+library(gvlma)
+library(report)
+library(ggstance)
+library(jtools)
+library(interactions)
+library(psych)
+library(kableExtra)
+library(gtools)
+library(caret)
+library(performance)
+library(MASS)
+library(lmtest)
+library(sandwich)
+library(ggplot2)  
+library(lattice) 
+library(blorr) 
+library(glmtoolbox)
+library(lmtest)  
+library(pROC)
+library(arm)
+library(pROC)
+library(repmod)
+library(countreg)
+library(tidymodels)
+library(tidyflow)
+library(rpart.plot)
+library(vip)
+library(baguette)
+library(ranger)
+library(xgboost)
+library(sf)
+library(tidycensus)
+library(viridis)
+library(tigris)
+library(usmap)
+library(rgdal)
+```
+
+# DATA CLEANING AND PREPARATION
+
+```{r}
+# read census block group data from GitHub
+blk_data <- read.csv("https://raw.githubusercontent.com/ricerb/biol-562-project/master/data/biol562%20project%20dataset%20v1.csv")
+```
+
+```{r}
+# select required blk group variables 
+select_data <- blk_data[,c("GEOID", "STATEFP", "ADI_NATRANK", "STATE","POPULATION","TRACTA")]
+
+# set empty cells to NA and omit
+select_data[select_data == ""] <- NA   
+
+# rename total population variable
+names(select_data)[names(select_data) == "POPULATION"] <- "BLK_POP.ppl"
+select_data$BLK_POP.ppl <- as.numeric(as.character(select_data$BLK_POP.ppl))
+```
+
+```{r}
+# rename block GEOID variable
+names(select_data)[names(select_data) == "GEOID"] <- "GEOID_blk"
+
+# add back leading zeros onto census data
+select_data$GEOID_blk <- as.character(select_data$GEOID_blk)
+select_data$GEOID_blk <- str_pad(select_data$GEOID_blk, pad="0", width = 12, side="left")
+# create new variable for corresponding tract GEOID
+select_data$GEOID_tract <- substr(select_data$GEOID_blk,1,11)
+```
+
+```{r}
+# calculate block group population-weighted NATL API index scores for census tracts
+select_data$ADI_NATRANK <- as.numeric(as.character(select_data$ADI_NATRANK))
+select_data <- na.omit(select_data)
+
+select_data <- select_data %>% group_by(GEOID_tract) %>% mutate(TRACT_POP.ppl = sum(BLK_POP.ppl))
+select_data$BLK_wt <- select_data$BLK_POP.ppl / select_data$TRACT_POP.ppl
+select_data$ADI_cont <- (select_data$BLK_wt)*(select_data$ADI_NATRANK)
+
+select_data <- select_data %>% group_by(GEOID_tract) %>% mutate(TRACT_ADI.ave = sum(ADI_cont))
+```
+
+```{r}
+# read census tract data from GitHub
+tract_data <- read.csv("https://raw.githubusercontent.com/ricerb/biol-562-project/master/data/biol562%20project%20dataset%20census%20tract%20level%20v1.csv")
+```
+
+```{r}
+# select census tract variables of interest
+data <- tract_data[,c("GEOID", "TRACTA","STATEFP","STATE", "STUSAB","COUNTY","YEAR", "pm25", "AREALAND", "AREAWATR","H7V001","H7X002","H7X003","H7X004","H7X005","H7X006","JN9E015","JN9E032","H7W002","H7W005", "JQBE001")]
+
+# replace empty cells with NA and remove
+data[data == ""] <- NA   
+data <- na.omit(data)
+
+# rename variables in tract data frame
+names(data)[names(data) == "pm25"] <- "PM2.5.ug_m3_LC"
+names(data)[names(data) == "AREALAND"] <- "AREALAND.m2"
+names(data)[names(data) == "AREAWATR"] <- "AREAWATR.m2"
+names(data)[names(data) == "H7V001"] <- "TOTAL_POP.ppl"
+names(data)[names(data) == "H7W002"] <- "URBAN_POP.ppl"
+names(data)[names(data) == "H7W005"] <- "RURAL_POP.ppl"
+names(data)[names(data) == "STUSAB"] <- "STATE_abbr"
+names(data)[names(data) == "H7X002"] <- "POPWH.ppl"
+names(data)[names(data) == "H7X003"] <- "POPBLKAA.ppl"
+names(data)[names(data) == "H7X004"] <- "POPNATIVE.ppl"
+names(data)[names(data) == "H7X005"] <- "POPASIAN.ppl"
+names(data)[names(data) == "H7X006"] <- "POPNATIVEISL.ppl"
+names(data)[names(data) == "JN9E015"] <- "BACHDEG_MALE25.ppl"
+names(data)[names(data) == "JN9E032"] <- "BACHDEG_FEM25.ppl"
+names(data)[names(data) == "JQBE001"] <- "PERCAPINCOME_12mo.2010USD"
+```
+
+```{r}
+# calculate population density. (From Sage-) I LOOKED THIS UP, pop density is people/sq units of land. also our stuff looked weird with this as sq meter so i made it sq kilo.
+blkGrpA <- data$AREALAND.m2
+blkGrpPopDen <- data$TOTAL_POP.ppl / blkGrpA
+data$POPDENS.ppl_km2 <- blkGrpPopDen *10^6
+
+# calculate census tract proportions
+data$PROP_URBAN.percent <- (data$URBAN_POP.ppl / data$TOTAL_POP.ppl) *100
+data$PROP_RURAL.percent <- (data$RURAL_POP.ppl / data$TOTAL_POP.ppl) *100
+data$PROP_WH.percent <- (data$POPWH.ppl / data$TOTAL_POP.ppl) *100
+data$PROP_BLKAA.percent <- (data$POPBLKAA.ppl / data$TOTAL_POP.ppl) *100
+data$PROP_NATIVE.percent <- (data$POPNATIVE.ppl / data$TOTAL_POP.ppl) *100
+data$PROP_ASIAN.percent <- (data$POPASIAN.ppl / data$TOTAL_POP.ppl) *100
+data$PROP_NATIVEISL.percent <- (data$POPNATIVEISL.ppl / data$TOTAL_POP.ppl) *100
+data$PROP_BACHDEG_25.percent <- ((data$BACHDEG_MALE25.ppl + data$BACHDEG_FEM25.ppl) / data$TOTAL_POP.ppl) *100
+data$log_POPDENS.ln_ppl_km2 <- log(data$POPDENS.ppl_km2)
+```
+
+```{r}
+# replace % degree holders greater than 100 with NAN
+is.na(data$PROP_BACHDEG_25.percent) <- data$PROP_BACHDEG_25.percent > 100
+```
+
+```{r}
+# add back leading zeros onto census data
+data$GEOID <- as.character(data$GEOID)
+data$GEOID <- str_pad(data$GEOID, pad="0", width = 11, side="left")
+```
+
+```{r}
+# merge population weighted census blk ADIs with census tract data
+blk_data_select <- select_data[,c("GEOID_tract","TRACT_ADI.ave")]
+blk_data_select <- distinct(blk_data_select)
+names(blk_data_select)[names(blk_data_select) == "GEOID_tract"] <- "GEOID"
+
+data <- left_join(data,blk_data_select,by="GEOID")
+```
+
+```{r}
+# determine PM2.5 quantiles and assign quantile numbers to census tracts
+pm25_quant <- quantile(data$PM2.5.ug_m3_LC, na.rm=TRUE)
+pm25_quant
+
+pm25_q1 <- pm25_quant[2]
+pm25_q2 <- pm25_quant[3]
+pm25_q3 <- pm25_quant[4]
+pm25_q4 <- pm25_quant[5]
+
+data_pm25_Q1 <- data[data$PM2.5.ug_m3_LC < pm25_q1,]
+data_pm25_Q2 <- data[data$PM2.5.ug_m3_LC >= pm25_q1 & data$PM2.5.ug_m3_LC < pm25_q2,]
+data_pm25_Q3 <- data[data$PM2.5.ug_m3_LC >= pm25_q2 & data$PM2.5.ug_m3_LC < pm25_q3,]
+data_pm25_Q4 <- data[data$PM2.5.ug_m3_LC >= pm25_q3,]
+
+data$PM25_quant <- as.factor(ifelse(data$PM2.5.ug_m3_LC<pm25_q1, '1',
+                     ifelse(data$PM2.5.ug_m3_LC<pm25_q2, '2',
+                     ifelse(data$PM2.5.ug_m3_LC<pm25_q3, '3',
+                     ifelse(data$PM2.5.ug_m3_LC<=pm25_q4, '4', 'E')))))
+```
+
+```{r}
+# CENSUS DEFINE REGIONS
+NE_reg <- c("CT","NJ","NY","PA","MA","NH","VT","RI","ME")
+
+MW_reg <- c("IL","IN","MI","OH","WI","IA","KS","MN","MO","NE","ND","SD")
+
+S_reg <- c("DE","DC","FL","GA","MD","NC","SC","VA","WV","AL","KY","MS","TN","AR","LA","OK","TX")
+
+W_reg <- c("AZ","CO","ID","MT","NV","NM","UT","WY","CA","OR","WA")
+```
+
+```{r}
+# assign tracts regions
+data$CENSUS_REG <- as.factor(ifelse(data$STATE_abbr %in% NE_reg, 'Northeast',
+                     ifelse(data$STATE_abbr %in% MW_reg, 'Midwest',
+                     ifelse(data$STATE_abbr %in% S_reg, 'South',
+                     ifelse(data$STATE_abbr %in% W_reg, 'West', 'Other')))))
+```
+
+# SUMMARY STATISTICS
+```{r}
+data %>% summarize(mean=mean(PM2.5.ug_m3_LC), sd=sd(PM2.5.ug_m3_LC), median=median(PM2.5.ug_m3_LC), n=n())
+
+sum(data$TOTAL_POP.ppl)
+
+# primary nonattainment
+sum(data$PM2.5.ug_m3_LC > 12)
+sum(data$PM2.5.ug_m3_LC > 12)/71857
+
+# secondary nontaainment
+sum(data$PM2.5.ug_m3_LC > 15)
+sum(data$PM2.5.ug_m3_LC > 15)/71857
+```
+
+# EXPLORATORY PLOTS
+
+```{r}
+#ggpairs(data, columns= c("PM2.5.ug_m3_LC","TRACT_ADI.ave","POPDENS.ppl_km2","PROP_URBAN.percent","PROP_BACHDEG_25.percent","PROP_BLKAA.percent","PERCAPINCOME_12mo.2010USD"), alpha=0.2)
+```
+
+```{r}
+# histograms for PM2.5
+pmHist<- ggplot(data, aes(x=PM2.5.ug_m3_LC)) + geom_histogram(bins=60, color="lightgrey", fill="lightgrey") + theme_classic() + ylab("Count") + xlab("Average PM2.5 in Census Tracts (ug/m3 (LC))") +geom_vline(xintercept = 12, color="darkred", size=1)+ 
+  geom_text(aes(x=15, label="EPA Secondary Annual Average Standard = 15 ug/m3 \n", y=2200), color="darkorange", angle=90, text=element_text(size=11))+
+  geom_vline(xintercept = 15, color="darkorange", size=1)+ 
+  geom_text(aes(x=12, label="EPA Primary Annual Average Standard = 12 ug/m3 \n", y=2200), color="darkred", angle=90, text=element_text(size=11))
+pmHist
+ggsave("pmHist.png",pmHist)
+```
+
+```{r}
+# boxplots from pm2.5 quantiles
+pmBxp<-ggplot(data=data,aes(x=PM25_quant,y=PM2.5.ug_m3_LC,group=PM25_quant)) + geom_boxplot(aes(fill=PM25_quant))+ theme_classic() + xlab("PM2.5 Quantile") + ylab("PM2.5 Concentration (ug/m3)") + scale_fill_brewer(palette="Dark2", name="PM2.5 Quantile")
+ggsave("pmBxp.png",pmBxp)
+```
+
+```{r}
+# boxplots from pm2.5 quantiles vs national AQI
+adiBxp<-ggplot(data=data,aes(x=PM25_quant,y=TRACT_ADI.ave,group=PM25_quant)) + geom_boxplot(aes(fill=PM25_quant))+ theme_classic() + xlab("PM2.5 Quantile") + ylab("ADI National Index Score")+ scale_fill_brewer(palette="Dark2", name="PM2.5 Quantile") + coord_flip()
+ggsave("adiBxp.png",adiBxp)
+```
+
+```{r, fig.width=7,fig.height=7}
+# scatterplot from pm2.5 vs national ADI
+adiScat<-ggplot(data=data,aes(y=PM2.5.ug_m3_LC,x=TRACT_ADI.ave)) + geom_point(alpha=0.05) + theme_classic() + ylab("PM2.5 (ug/m3)") + xlab("ADI National Index Score") + geom_smooth(method=lm, color="blue") + theme(axis.title.x = element_text(size = 14),axis.title.y = element_text(size = 14))
+adiScat
+ggsave("adiScat.png", adiScat)
+```
+
+```{r}
+# boxplots from pm2.5 quantiles vs population density
+popdensBxp<-ggplot(data=data,aes(x=PM25_quant,y=POPDENS.ppl_km2,group=PM25_quant)) + geom_boxplot(aes(fill=PM25_quant))+ theme_classic() + xlab("PM2.5 Quantile") + ylab("Population Density (people/km2)") + scale_fill_brewer(palette="Dark2", name="PM2.5 Quantile") + coord_flip() 
+ggsave("popdensBxp.png",popdensBxp)
+```
+
+```{r, fig.width=7,fig.height=7}
+# scatterplot from popDens vs pm2.5
+popdensScat<-ggplot(data=data,aes(x=POPDENS.ppl_km2,y=PM2.5.ug_m3_LC)) + geom_point(alpha=0.05) + theme_classic() + ylab("PM2.5 (ug/m3)") + xlab("Population Density (people/km2)") + geom_smooth(method=lm, color="blue") + ylim(0, 25) + theme(axis.title.x = element_text(size = 14),axis.title.y = element_text(size = 14))
+ggsave("popdensScat.png",popdensScat)
+```
+
+```{r}
+# boxplots from pm2.5 quantiles vs log population density
+popdensBxp<-ggplot(data=data,aes(x=PM25_quant,y=log_POPDENS.ln_ppl_km2,group=PM25_quant)) + geom_boxplot(aes(fill=PM25_quant))+ theme_classic() + xlab("PM2.5 Quantile") + ylab("Ln(Population Density) (ln(people/km2))") + scale_fill_brewer(palette="Dark2", name="PM2.5 Quantile") + coord_flip() 
+ggsave("logpopdensBxp.png",popdensBxp)
+```
+
+```{r, fig.width=7,fig.height=7}
+# scatterplot from log popDens vs pm2.5
+popdensScat<-ggplot(data=data,aes(x=log_POPDENS.ln_ppl_km2,y=PM2.5.ug_m3_LC)) + geom_point(alpha=0.05) + theme_classic() + ylab("PM2.5 (ug/m3)") + xlab("Ln(Population Density) (ln(people/km2))") + geom_smooth(method=lm, color="blue") + ylim(0, 25) + theme(axis.title.x = element_text(size = 14),axis.title.y = element_text(size = 14))
+ggsave("logpopdensScat.png",popdensScat)
+```
+
+```{r}
+# boxplots from pm2.5 quantiles vs % urban
+urbanBxp<-ggplot(data=data,aes(x=PM25_quant,y=PROP_URBAN.percent,group=PM25_quant)) + geom_boxplot(aes(fill=PM25_quant))+ theme_classic() + xlab("PM2.5 Quantile") + ylab("Percent Urban Population (%)") + scale_fill_brewer(palette="Dark2", name="PM2.5 Quantile") + coord_flip()
+ggsave("urbanBxp.png",urbanBxp)
+```
+
+```{r, fig.width=7,fig.height=7}
+# scatterplot from % urban vs pm2.5
+urbanScat<-ggplot(data=data,aes(x=PROP_URBAN.percent,y=PM2.5.ug_m3_LC)) + geom_point(alpha=0.05) + theme_classic() + ylab("PM2.5 (ug/m3)") + xlab("Percent Urban Population (%)") + geom_smooth(method=lm, color="blue") + theme(axis.title.x = element_text(size = 14),axis.title.y = element_text(size = 14))
+ggsave("urbanScat.png",urbanScat)
+```
+
+```{r}
+# boxplots from pm2.5 quantiles vs % rural
+ruralBxp<-ggplot(data=data,aes(x=PM25_quant,y=PROP_RURAL.percent,group=PM25_quant)) + geom_boxplot(aes(fill=PM25_quant))+ theme_classic() + xlab("PM2.5 Quantile") + ylab("Percent Rural Population (%)") + scale_fill_brewer(palette="Dark2", name="PM2.5 Quantile") + coord_flip()
+ggsave("ruralBxp.png",ruralBxp)
+```
+
+```{r}
+# boxplots from pm2.5 quantiles vs % 25+ with bachelor degree
+bachdegBxp<-ggplot(data=data,aes(x=PM25_quant,y=PROP_BACHDEG_25.percent,group=PM25_quant)) + geom_boxplot(aes(fill=PM25_quant))+ theme_classic() + xlab("PM2.5 Quantile") + ylab("Percent Population 25+ with Bachelors (%)") + scale_fill_brewer(palette="Dark2", name="PM2.5 Quantile") + coord_flip()
+ggsave("bachdegBxp.png",bachdegBxp)
+```
+
+```{r, fig.width=7,fig.height=7}
+# scatterplot from % bachelors vs pm2.5
+bachdegScat<-ggplot(data=data,aes(x=PROP_BACHDEG_25.percent,y=PM2.5.ug_m3_LC)) + geom_point(alpha=0.05) + theme_classic() + ylab("PM2.5 (ug/m3)") + xlab("Percent Population 25+ with Bachelors (%)")+ geom_smooth(method=lm, color="blue") + theme(axis.title.x = element_text(size = 14),axis.title.y = element_text(size = 14))
+ggsave("bachdegScat.png",bachdegScat)
+```
+
+```{r}
+# boxplots from pm2.5 quantiles vs % Black/African American
+BAAbxp<-ggplot(data=data,aes(x=PM25_quant,y=PROP_BLKAA.percent,group=PM25_quant)) + geom_boxplot(aes(fill=PM25_quant))+ theme_classic() + xlab("PM2.5 Quantile") + ylab("Percent Black or African American (%)")+ scale_fill_brewer(palette="Dark2", name="PM2.5 Quantile") + coord_flip()
+ggsave("BAAbxp.png",BAAbxp)
+```
+
+```{r, fig.width=7,fig.height=7}
+# scatterplot from % Black or African American vs pm2.5
+BAAscat<-ggplot(data=data,aes(x=PROP_BLKAA.percent,y=PM2.5.ug_m3_LC)) + geom_point(alpha=0.05) + theme_classic() + ylab("PM2.5 (ug/m3)") + xlab("Percent Black or African American Only (%)")+ geom_smooth(method=lm, color="blue") + theme(axis.title.x = element_text(size = 14),axis.title.y = element_text(size = 14))
+ggsave("BAAscat.png",BAAscat)
+```
+
+```{r, fig.width=7,fig.height=7}
+# scatterplot from % White only vs pm2.5
+whScat<-ggplot(data=data,aes(x=PROP_WH.percent,y=PM2.5.ug_m3_LC)) + geom_point(alpha=0.05) + theme_classic() + ylab("PM2.5 (ug/m3)") + xlab("Percent White Only (%)")+ geom_smooth(method=lm, color="blue") + theme(axis.title.x = element_text(size = 14),axis.title.y = element_text(size = 14))
+ggsave("whScat.png",whScat)
+```
+
+```{r, fig.width=7,fig.height=7}
+# scatterplot from % Asian vs pm2.5
+AsScat<-ggplot(data=data,aes(x=PROP_ASIAN.percent,y=PM2.5.ug_m3_LC)) + geom_point(alpha=0.05) + theme_classic() + ylab("PM2.5 (ug/m3)") + xlab("Percent Asian Only (%)")+ geom_smooth(method=lm, color="blue") + theme(axis.title.x = element_text(size = 14),axis.title.y = element_text(size = 14))
+ggsave("AsScat.png",AsScat)
+```
+
+```{r, fig.width=7,fig.height=7}
+# scatterplot from % Native vs pm2.5
+NAscat<-ggplot(data=data,aes(x=PROP_NATIVE.percent,y=PM2.5.ug_m3_LC)) + geom_point(alpha=0.05) + theme_classic() + ylab("PM2.5 (ug/m3)") + xlab("Percent American Indian and Alaska Native Alone")+ geom_smooth(method=lm, color="blue") + theme(axis.title.x = element_text(size = 14),axis.title.y = element_text(size = 14))
+ggsave("NAscat.png",NAscat)
+```
+
+```{r, fig.width=7,fig.height=7}
+# scatterplot from % Native Hawiann or Pacific Islander vs pm2.5
+NHPIscat<-ggplot(data=data,aes(x=PROP_NATIVEISL.percent,y=PM2.5.ug_m3_LC)) + geom_point(alpha=0.05) + theme_classic() + ylab("PM2.5 (ug/m3)") + xlab("Percent Native Hawaiian and Other Pacific Islander Alone")+ geom_smooth(method=lm, color="blue") +ylim(0, NA) + theme(axis.title.x = element_text(size = 14),axis.title.y = element_text(size = 14))
+ggsave("NHPIscat.png",NHPIscat)
+```
+
+```{r}
+# boxplots from pm2.5 quantiles vs Per CAP INCOME
+incBxp<-ggplot(data=data,aes(x=PM25_quant,y=PERCAPINCOME_12mo.2010USD,group=PM25_quant)) + geom_boxplot(aes(fill=PM25_quant))+ theme_classic() + xlab("PM2.5 Quantile") + ylab("12mo Per Capita Income (2010 USD)")+ scale_fill_brewer(palette="Dark2", name="PM2.5 Quantile") + scale_y_continuous(labels = scales::comma) + coord_flip()
+ggsave("incBxp.png",incBxp)
+```
+
+```{r, fig.width=7,fig.height=7}
+# scatterplot for Per CAP INCOME vs pm2.5
+incScat<-ggplot(data=data,aes(x=PERCAPINCOME_12mo.2010USD,y=PM2.5.ug_m3_LC)) + geom_point(alpha=0.05) + theme_classic() + ylab("PM2.5 (ug/m3)") + xlab("12mo Per Capita Income (2010 USD)") + scale_x_continuous(labels = scales::comma)+ geom_smooth(method=lm, color="blue") + theme(axis.title.x = element_text(size = 14),axis.title.y = element_text(size = 14))
+ggsave("incScat.png",incScat)
+```
+
+# EXPLORATORY MAPS
+
+```{r}
+test <- read_sf("tractShpfile/US_tract_2010.shp")
+
+UStract <- subset(test, !(STATEFP10 %in% c("02", "15", "72")))
+```
+
+```{r}
+# merge spatial, census, and ADI data
+names(UStract)[names(UStract) == "GEOID10"] <- "GEOID"
+
+UStractMerge <- UStract[c("GEOID","geometry")]
+```
+
+```{r}
+data_sf <- merge(UStractMerge,data,by="GEOID")
+```
+
+```{r}
+# download states from tigris
+states<- states(cb=TRUE)
+
+# assign tracts regions to states
+states$CENSUS_REG <- as.factor(ifelse(states$STUSPS %in% NE_reg, 'Northeast',
+                     ifelse(states$STUSPS %in% MW_reg, 'Midwest',
+                    ifelse(states$STUSPS %in% S_reg, 'South',
+                     ifelse(states$STUSPS %in% W_reg, 'West', 'Other')))))
+
+# remove other census regions
+states<-states[states$CENSUS_REG != "Other",]
+
+regionPlotState <- ggplot(states) +geom_sf(aes(fill=CENSUS_REG), color=NA)+ 
+  labs(title = "Census Regions for Continental Sates")+
+  theme(axis.text =  element_blank(),
+    axis.ticks =  element_blank(),
+    panel.background = element_blank()) + labs(fill='Census Region') 
+regionPlotState
+ggsave("regionPlotState.png",regionPlotState)
+
+regionPlotTract <- ggplot(data_sf) +geom_sf(aes(fill=CENSUS_REG), color=NA)+ 
+  labs(title = "Census Regions for Census Tracts included in Analysis")+
+  theme(axis.text =  element_blank(),
+    axis.ticks =  element_blank(),
+    panel.background = element_blank()) + labs(fill='Census Region') 
+regionPlotTract
+ggsave("regionPlotTract.png",regionPlotTract)
+```
+
+```{r}
+pmPlot<-ggplot(data_sf)+geom_sf(aes(fill=PM2.5.ug_m3_LC), color = NA) + 
+  labs(title = "Average PM2.5 in US Census Tracts") + 
+  scale_fill_gradient(low = "grey94", high = "sienna2", na.value ="darkgrey", name="Concentration (ug/m3)")+
+  theme(axis.text =  element_blank(),
+    axis.ticks =  element_blank(),
+    panel.background = element_blank())
+ggsave("pmPlot.png",pmPlot)
+```
+
+```{r}
+whitePlot<-ggplot(data_sf)+geom_sf(aes(fill=PROP_WH.percent), color = NA) + 
+  labs(title = "Percent White Alone in US Census Tracts") + 
+  scale_fill_gradient(low = "grey94", high = "tomato", na.value ="darkgrey", name="Percent (%)") +  
+  theme(axis.text =  element_blank(),
+    axis.ticks =  element_blank(),
+    panel.background = element_blank())
+ggsave("whitePlot.png",whitePlot)
+```
+
+```{r}
+blkAaPlot<-ggplot(data_sf)+geom_sf(aes(fill=PROP_BLKAA.percent), color = NA) + 
+  labs(title = "Percent Black or African American Alone in US Census Tracts") + 
+  scale_fill_gradient(low = "grey94", high = "slateblue4", na.value ="darkgrey", name="Percent (%)") +
+  theme(axis.text =  element_blank(),
+    axis.ticks =  element_blank(),
+    panel.background = element_blank())
+ggsave("blkAaPlot.png",blkAaPlot)
+```
+
+```{r}
+asianPlot<-ggplot(data_sf)+geom_sf(aes(fill=PROP_ASIAN.percent), color = NA) + 
+  labs(title = "Percent Asian Alone in US Census Tracts") + 
+  scale_fill_gradient(low = "grey94", high = "chartreuse4", na.value ="darkgrey", name="Percent (%)") +  
+  theme(axis.text =  element_blank(),
+    axis.ticks =  element_blank(),
+    panel.background = element_blank())
+ggsave("asianPlot.png",asianPlot)
+```
+
+```{r}
+nativeIslPlot<-ggplot(data_sf)+geom_sf(aes(fill=PROP_NATIVEISL.percent), color = NA) + 
+  labs(title = "Percent Native Hawaiian and Other Pacific Islander Alone in US Census Tracts") + 
+  scale_fill_gradient(low = "grey94", high = "red3", na.value ="darkgrey", name="Percent (%)") +  
+  theme(axis.text =  element_blank(),
+    axis.ticks =  element_blank(),
+    panel.background = element_blank())
+ggsave("nativeIslPlot.png",nativeIslPlot)
+```
+
+```{r}
+nativePlot<-ggplot(data_sf)+geom_sf(aes(fill=PROP_NATIVE.percent), color = NA) + 
+  labs(title = "Percent American Indian and Alaska Native Alone in US Census Tracts") + 
+  scale_fill_gradient(low = "grey94", high = "darkolivegreen", na.value ="darkgrey", name="Percent (%)") +  
+  theme(axis.text =  element_blank(),
+    axis.ticks =  element_blank(),
+    panel.background = element_blank())
+ggsave("nativePlot.png",nativePlot)
+```
+
+```{r}
+degPlot<-ggplot(data_sf)+geom_sf(aes(fill=PROP_BACHDEG_25.percent), color = NA) + 
+  labs(title = "Percent 25+ with Bachelors in US Census Tracts") + 
+  scale_fill_gradient(low = "grey94", high = "navy", na.value ="darkgrey", name="Percent (%)")+  theme(axis.text =  element_blank(),
+    axis.ticks =  element_blank(),
+    panel.background = element_blank())
+ggsave("degPlot.png",degPlot)
+```
+
+```{r}
+urbanPlot<-ggplot(data_sf)+geom_sf(aes(fill=PROP_URBAN.percent), color = NA) + 
+  labs(title = "Percent Urban in US Census Tracts") + 
+  scale_fill_gradient(low = "grey94", high = "tan2", na.value ="darkgrey", name="Percent (%)") +  
+  theme(axis.text =  element_blank(),
+    axis.ticks =  element_blank(),
+    panel.background = element_blank())
+ggsave("urbanPlot.png",urbanPlot)
+```
+
+```{r}
+popDensPlot<-ggplot(data_sf)+geom_sf(aes(fill=POPDENS.ppl_km2), color = NA) + 
+  labs(title = "Population Density (people/km2) US Census Tracts") + 
+  scale_fill_gradient(low = "grey94", high = "red4", na.value ="darkgrey", name="Population Density (people/km2)") +  
+  theme(axis.text =  element_blank(),
+    axis.ticks =  element_blank(),
+    panel.background = element_blank())
+ggsave("popDensPlot.png",popDensPlot)
+```
+
+```{r}
+logpopDensPlot<-ggplot(data_sf)+geom_sf(aes(fill=log_POPDENS.ln_ppl_km2), color = NA) + 
+  labs(title = "Natural-Log Population Density US Census Tracts") + 
+  scale_fill_gradient(low = "grey94", high = "red4", na.value ="darkgrey", name="ln(people/km2)") +  
+  theme(axis.text =  element_blank(),
+    axis.ticks =  element_blank(),
+    panel.background = element_blank())
+ggsave("logpopDensPlot.png",logpopDensPlot)
+```
+
+```{r}
+adiPlot<-ggplot(data_sf)+geom_sf(aes(fill=TRACT_ADI.ave), color = NA) + 
+  labs(title = "Average ADI in US Census Tracts") + 
+  scale_fill_gradient(low = "grey94", high = "orangered3", na.value ="gray", name="ADI Score") +  
+  theme(axis.text =  element_blank(),
+    axis.ticks =  element_blank(),
+    panel.background = element_blank())
+ggsave("adiPlot.png",adiPlot)
+```
+
+```{r}
+incomePlot<-ggplot(data_sf)+geom_sf(aes(fill=PERCAPINCOME_12mo.2010USD), color = NA) + 
+  labs(title = "Average 12-Month Per Capita Income in US Census Tracts") + 
+  scale_fill_gradient(low = "grey94", high = "green4", na.value ="gray", name="2010USD", labels = scales::comma) + theme(axis.text =  element_blank(),
+    axis.ticks =  element_blank(),
+    panel.background = element_blank())
+ggsave("incomePlot.png",incomePlot)
+```
+
+# This is my code for the machine learning part. My code isn't working for the geometry part of the data, so only run either this code or Nora's code above if you don't want to mess up the code. If you want to see the outputs of machine learning, start from that section without running the intermediate code below. 
+
+```{r}
+plot_usmap("states",fill=NA) 
+```
+
+```{r}
+tidycensus::census_api_key("cab9212edc0bd6f90c452f82768de2863bcaf428")
+library(foreign)
+shapefile <- read.dbf("US_tract_2010.dbf", as.is = FALSE)
+
+UStract <- subset(shapefile, !(STATEFP10 %in% c("02", "15", "72")))
+```
+
+```{r}
+# merge spatial, census, and ADI data
+UStract$TRACTCE10 <- as.numeric(as.character(UStract$TRACTCE10))
+names(UStract)[names(UStract) == "TRACTCE10"] <- "TRACTA"
+UStract$TRACTA <- as.character(as.numeric(UStract$TRACTA))
+names(UStract)[names(UStract) == "STATEFP10"] <- "STATEFP"
+UStract$STATEFP <- as.character(as.numeric(UStract$STATEFP))
+names(UStract)[names(UStract) == "GEOID10"] <- "GEOID"
+
+UScopy <- data.frame(UStract)
+UScopy$geometry <- paste(UStract$INTPTLAT10, UStract$INTPTLON10, sep = ",")
+
+```
+
+```{r}
+data_sf <- merge(UScopy,data,by="GEOID")
+```
+
+
+# Start here. 
+
+# Machine Learning- Sage: 
+
+# Population Density looks weird, so I am altering the formula. Please see comments in that section. 
+
+Decision Tree Code and Output: 
+
+```{r warning= FALSE}
+library(tidyflow)
+# Define the decision tree and tell it the the dependent
+# variable is continuous ('mode' = 'regression')
+dt_ctrl <- rpart.control(maxdepth = 3)
+mod1 <- set_engine(decision_tree(mode = "regression"), "rpart", control = dt_ctrl)
+tflow <-
+  # Plug the data
+  data_sf %>%
+  # Begin the tidyflow
+  tidyflow(seed = 23151) %>%
+  # Separate the data into training/testing (we are keeping 3/4 of the data for training)
+  plug_split(initial_split, prop = 3/4) %>%
+  # Plug the formula
+  plug_formula(PM2.5.ug_m3_LC ~ TOTAL_POP.ppl + BACHDEG_MALE25.ppl + BACHDEG_FEM25.ppl + URBAN_POP.ppl + RURAL_POP.ppl + PERCAPINCOME_12mo.2010USD + CENSUS_REG + PROP_WH.percent + PROP_BLKAA.percent + PROP_NATIVE.percent + PROP_NATIVEISL.percent + PROP_ASIAN.percent + PROP_BACHDEG_25.percent + TRACT_ADI.ave + log(POPDENS.ppl_km2)) %>%
+  # Plug the model
+  plug_model(mod1)
+
+res_rf <- tflow %>% fit()
+
+vanilla_fit <- fit(tflow)
+tree <- pull_tflow_fit(vanilla_fit)$fit
+rpart.plot(tree)
+```
+Random Forest and Ranking of Variables: 
+
+```{r}
+data_sfnew <- na.omit(data_sf)
+```
+
+```{r}
+# Define the random forest. There are about 15 predictor variables, I used 1/3 for mtry, so 5.
+rf_mod <-
+  rand_forest(mode = "regression", mtry = 5) %>%
+  set_engine("ranger", importance = "impurity")
+
+# Define the `tidyflow` with the random forest model
+tflow3 <-
+data_sfnew %>%
+  tidyflow(seed = 1738) %>%
+  plug_formula(PM2.5.ug_m3_LC ~ TOTAL_POP.ppl + BACHDEG_MALE25.ppl + BACHDEG_FEM25.ppl + URBAN_POP.ppl + RURAL_POP.ppl + PERCAPINCOME_12mo.2010USD + CENSUS_REG + PROP_WH.percent + PROP_BLKAA.percent + PROP_NATIVE.percent + PROP_NATIVEISL.percent + PROP_ASIAN.percent + PROP_BACHDEG_25.percent + TRACT_ADI.ave + log(POPDENS.ppl_km2)) %>%
+  plug_split(initial_split, prop = 3/4) %>%
+  plug_model(rf_mod)
+
+res_rf3 <- tflow3 %>% fit()
+
+res_rf3 %>%
+  pull_tflow_fit() %>%
+  .[['fit']] %>%
+  vip()+
+  theme_minimal()
+```
+
+Boosted Model and Ranking of Variable Importance: 
+
+```{r}
+boost_mod <-
+  boost_tree(mode = "regression", trees = 500) %>%
+  set_engine("xgboost")
+
+tflow4 <-
+  data_sfnew %>%
+  tidyflow(seed = 51231) %>%
+   plug_formula(PM2.5.ug_m3_LC ~ TOTAL_POP.ppl + BACHDEG_MALE25.ppl + BACHDEG_FEM25.ppl + URBAN_POP.ppl + RURAL_POP.ppl + PERCAPINCOME_12mo.2010USD + CENSUS_REG + PROP_WH.percent + PROP_BLKAA.percent + PROP_NATIVE.percent + PROP_NATIVEISL.percent + PROP_ASIAN.percent + PROP_BACHDEG_25.percent + TRACT_ADI.ave + log(POPDENS.ppl_km2)) %>%
+  plug_split(initial_split, prop = 3/4) %>%
+  plug_model(boost_mod)
+
+res_boost <- tflow4 %>% fit()
+
+res_boost %>%
+  pull_tflow_fit() %>%
+  .[['fit']] %>%
+  vip()+
+  theme_minimal()
+```
+
+```{r warning= FALSE, message= FALSE}
+
+res_rf %>%
+  predict_training() %>%
+  rmse(PM2.5.ug_m3_LC, .pred)
+
+res_rf %>%
+  predict_testing() %>%
+  rmse(PM2.5.ug_m3_LC, .pred)
+
+res_rf3 %>%
+  predict_training() %>%
+  rmse(PM2.5.ug_m3_LC, .pred)
+
+res_rf3 %>%
+  predict_testing() %>%
+  rmse(PM2.5.ug_m3_LC, .pred)
+
+res_boost %>%
+  predict_training() %>%
+  rmse(PM2.5.ug_m3_LC, .pred)
+
+res_boost %>%
+  predict_testing() %>%
+  rmse(PM2.5.ug_m3_LC, .pred)
+
+
+#For Byron's part
+#ctpred <- predict(carbon_modelmultiplelinearmodel, new_data = carbon_train) %>% 
+  #as.data.frame() %>% 
+  #pull(.pred)
+#ctestpred <- predict(carbon_modelmultiplelinearmodel, new_data = carbon_test) %>% 
+  #as.data.frame() %>% 
+  #pull(.pred)
+
+#lasttrain_rmse <- rmse_vec(carbon_train$res.carbon.pc.mt, ctpred)
+#lasttest_rmse <- rmse_vec(carbon_test$res.carbon.pc.mt, ctestpred)
+
+#lasttest_rmse
+#lasttrain_rmse
+```
+Byron's Linear Model, converted to more easily take RMSE: 
+
+```{r}
+library(tidymodels)
+
+set.seed(020304)
+
+lr_spec <- linear_reg() %>%
+  set_engine("lm") %>%
+  set_mode("regression")
+
+pm_modelmultiplelinearmodel <- lr_spec %>%
+  fit(PM2.5.ug_m3_LC~PROP_BLKAA.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent+ log(POPDENS.ppl_km2), data=data_sf)
+(pm_modelmultiplelinearmodel)
+```
+```{r}
+RMSE1 <- predict(pm_modelmultiplelinearmodel, new_data = data_sf) %>% 
+  as.data.frame() %>% 
+  pull(.pred)
+
+linearmodelrmse <- rmse_vec(data_sf$PM2.5.ug_m3_LC, RMSE1)
+linearmodelrmse
+```
+
+Code for Table: 
+
+```{r}
+# Code for Table: 
+
+library(dplyr)
+rmse_fortable <- data.frame(model = c("Decision Tree Training", "Decision Tree Test", "Random Forest Training", "Random Forest Test", "Boosted Training", "Boosted Test", "Linear Regression of Predictive Variables"),  rmse = c(2.117053, 2.129072, 0.6950791, 1.651716, 0.9260673, 1.728985, 2.655934))
+
+rmse_sorted <- arrange(rmse_fortable, rmse)
+print(rmse_sorted)
+```
+
+# New Part
+
+```{r}
+# linear model exploring unadjusted relationship between PM2.5 and proportion white
+m1 <- lm(PM2.5.ug_m3_LC~ PROP_WH.percent, data=data_sf)
+summary(m1)
+```
+
+```{r}
+# linear model exploring association between PM2.5 and proportion white, controlling for education, per-capita income, and prop urban
+
+m2 <- lm(PM2.5.ug_m3_LC~PROP_WH.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent, data=data_sf)
+summary(m2)
+```
+```{r}
+mb <- lm(PM2.5.ug_m3_LC~PROP_BLKAA.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent+ log(POPDENS.ppl_km2), data=data_sf)
+summary(mb)
+check_model(mb)
+```
+
+```{r}
+check_model(m2)
+```
+
+```{r}
+# reshape data to calculate population-weighted averages
+
+data_long <- data %>% pivot_longer(cols=c(POPWH.ppl, POPBLKAA.ppl, POPNATIVE.ppl, POPASIAN.ppl, POPNATIVEISL.ppl), names_to = "racial_group", values_to = "count.ppl")
+data_long$racial_group <- as.factor(data_long$racial_group)
+```
+
+```{r}
+# calculate population-weighted averages
+
+data_long <- data_long %>% group_by(racial_group) %>% mutate(sum(count.ppl))
+
+data_long$frac_pm25 <- (data_long$count.ppl/data_long["sum(count.ppl)"])*data_long$PM2.5.ug_m3_LC
+
+data_long <- as.data.frame(data_long) # correct issue with some sort of nesting of columns...
+
+data_long %>% group_by(racial_group) %>% summarize(sum(frac_pm25))
+
+```
+
+```{r}
+# fit linear model to check anova assumptions (with weights)
+
+m3 <- lm(PM2.5.ug_m3_LC~racial_group, data = data_long, weights = count.ppl)
+summary(m3)
+```
+
+```{r warning= FALSE}
+ggqqplot(data_long, "PM2.5.ug_m3_LC", facet.by = "racial_group")
+```
+
+```{r}
+# homogeneity of variance
+plot(m3, 1)
+```
+
+
+```{r}
+m4 <- aov(PM2.5.ug_m3_LC~racial_group, data = data_long, weights = count.ppl)
+summary(m4)
+```
+
+
+```{r}
+# logistic regression - a one-unit increase in ADI is associated with a small decrease in the odds of (beta = -8.09e-03, 95% CI [-9.02e-03, -7.17e-03], p < .001) a tract being in the top decile of PM2.5 concentrations
+data <- data %>% mutate(ntile(PM2.5.ug_m3_LC, 10))
+
+data$pm_90th <- ifelse(data["ntile(PM2.5.ug_m3_LC, 10)"] == 10, 1, 0)
+#quantile(data$TRACT_ADI.ave) > 0.9
+
+m5 <- glm(pm_90th ~ TRACT_ADI.ave, family = binomial, data = data)
+summary(m5)
+library(report)
+report(m5)
+```
+# Byron's Model Converted to Linear regression
+
+
+
+
+# Byron's exposure disparities analysis updated 4/21
+
+```{r}
+head(data)
+```
+
+```{r}
+# linear model exploring unadjusted relationship between PM2.5 and proportion white
+m1 <- lm(PM2.5.ug_m3_LC~PROP_WH.percent, data=data)
+summary(m1)
+```
+
+```{r}
+# linear model exploring association between PM2.5 and proportion white, controlling for education, per-capita income, and prop urban
+
+m2 <- lm(PM2.5.ug_m3_LC~PROP_WH.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent, data=data) # swap in log-population density for prop_urban
+summary(m2)
+```
+```{r}
+mb <- lm(PM2.5.ug_m3_LC~PROP_BLKAA.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent+log_POPDENS.ln_ppl_km2, data=data)
+summary(mb)
+check_model(mb)
+```
+
+```{r}
+check_model(m2)
+```
+
+```{r}
+# reshape data to calculate population-weighted averages
+
+data_long <- data %>% pivot_longer(cols=c(POPWH.ppl, POPBLKAA.ppl, POPNATIVE.ppl, POPASIAN.ppl, POPNATIVEISL.ppl), names_to = "racial_group", values_to = "count.ppl")
+data_long$racial_group <- as.factor(data_long$racial_group)
+```
+
+```{r}
+# calculate population-weighted averages
+
+data_long <- data_long %>% group_by(racial_group) %>% mutate(sum(count.ppl))
+
+data_long$frac_pm25 <- (data_long$count.ppl/data_long["sum(count.ppl)"])*data_long$PM2.5.ug_m3_LC
+
+data_long <- as.data.frame(data_long) # correct issue with some sort of nesting of columns...
+
+data_long %>% group_by(racial_group) %>% summarize(sum(frac_pm25))
+
+```
+
+```{r}
+# fit linear model to check anova assumptions (with weights)
+
+m3 <- lm(PM2.5.ug_m3_LC~racial_group, data = data_long, weights = count.ppl)
+summary(m3)
+```
+
+```{r}
+# Compute Shapiro-Wilk test of normality (doesn't work because size of dataset)
+shapiro_test(residuals(m3))
+```
+
+```{r}
+ggqqplot(data_long, "PM2.5.ug_m3_LC", facet.by = "racial_group")
+```
+
+```{r}
+# homogeneity of variance
+plot(m3, 1)
+```
+
+
+```{r}
+m4 <- aov(PM2.5.ug_m3_LC~racial_group, data = data_long, weights = count.ppl)
+summary(m4)
+```
+
+```{r}
+# Tukey post-hoc test doesn't work with population-weighted ANOVA
+
+TukeyHSD(m4)
+```
+
+```{r}
+# logistic regression - a one-unit increase in ADI is associated with a small decrease in the odds of (beta = -8.09e-03, 95% CI [-9.02e-03, -7.17e-03], p < .001) a tract being in the top decile of PM2.5 concentrations
+data <- data %>% mutate(ntile(PM2.5.ug_m3_LC, 10))
+
+data$pm_90th <- ifelse(data["ntile(PM2.5.ug_m3_LC, 10)"] == 10, 1, 0)
+#quantile(data$TRACT_ADI.ave) > 0.9
+
+m5 <- glm(pm_90th ~ TRACT_ADI.ave, family = binomial, data = data)
+summary(m5)
+library(report)
+report(m5)
+```
+
+
+
+
+
+
+
+
+
