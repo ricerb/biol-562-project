@@ -813,11 +813,8 @@ report(m5)
 
 
 
-# Byron's exposure disparities analysis updated 4/21
+# Byron's linear regression and logistic regression analysis updated 4/21
 
-```{r}
-head(data)
-```
 
 ```{r}
 # linear model exploring unadjusted relationship between PM2.5 and proportion white
@@ -834,7 +831,35 @@ summary(m2)
 ```{r}
 mb <- lm(PM2.5.ug_m3_LC~PROP_BLKAA.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent+log_POPDENS.ln_ppl_km2, data=data)
 summary(mb)
+mbt <- tidy(mb, conf.int = TRUE) %>% mutate_if(is.numeric, signif, digits=2)
+write_clip(mbt)
+mbt
+```
+
+```{r}
 check_model(mb)
+```
+
+```{r}
+# mb grouped by region
+
+# Use the "group_by" function to group the data by region and fit a linear model for pm2.5 explained by adi
+mb_region <- data %>%
+  nest_by(CENSUS_REG) %>%
+  mutate(model = list(lm(PM2.5.ug_m3_LC~PROP_BLKAA.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent+log_POPDENS.ln_ppl_km2, data = data))) %>%
+  summarise(tidy(model, conf.int = TRUE))
+mb_region <- mb_region %>% filter(term=="PROP_BLKAA.percent") %>% arrange(CENSUS_REG) %>% mutate_if(is.numeric, signif, digits=2) %>% relocate(conf.low, .after= estimate) %>% relocate(conf.high, .after = conf.low)
+mb_region
+write_clip(mb_region)
+```
+
+```{r}
+hist(data$PROP_BLKAA.percent)
+```
+
+```{r}
+library(car)
+avPlot(mb, variable = "PROP_BLKAA.percent", xlab = "% black | others", ylab = "PM2.5 (ug/m^3)", main="Added-Variable Plot")
 ```
 
 ```{r}
@@ -895,23 +920,54 @@ TukeyHSD(m4)
 ```
 
 ```{r}
+library(report)
 # logistic regression - a one-unit increase in ADI is associated with a small decrease in the odds of (beta = -8.09e-03, 95% CI [-9.02e-03, -7.17e-03], p < .001) a tract being in the top decile of PM2.5 concentrations
 data <- data %>% mutate(ntile(PM2.5.ug_m3_LC, 10))
 
+data$pm_50th <- ifelse(data["ntile(PM2.5.ug_m3_LC, 10)"] > 5, 1, 0)
 data$pm_90th <- ifelse(data["ntile(PM2.5.ug_m3_LC, 10)"] == 10, 1, 0)
-#quantile(data$TRACT_ADI.ave) > 0.9
 
-m5 <- glm(pm_90th ~ TRACT_ADI.ave, family = binomial, data = data)
+m5 <- glm(pm_50th ~ TRACT_ADI.ave, family = binomial, data = data)
 summary(m5)
-library(report)
 report(m5)
+
+m6 <- glm(pm_90th ~ TRACT_ADI.ave, family = binomial, data = data)
+summary(m6)
+report(m6)
+```
+```{r}
+hist(data$pm_50th)
 ```
 
+```{r}
+plot <- ggplot(data, aes(x=TRACT_ADI.ave, y=pm_50th, color = CENSUS_REG)) + 
+  geom_jitter(width = 0, height = 0.05) +
+  geom_smooth(method="glm",  method.args = list(family="binomial")) + 
+  labs(x = "ADI Score", y = "P(>50th %ile PM2.5)", title = "P(>50th %ile PM2.5) per ADI unit increase by region") +
+  facet_wrap(~ CENSUS_REG) #+
+  #scale_color_manual(values = c(fcolor, mcolor))
+plot
+ggsave("logistic regression.png")
+```
 
+```{r}
+library(broom)
+library(tidyverse)
+# linear regression of pm2.5 explained by adi grouped by region 
 
+# Use the "group_by" function to group the data by region and fit a linear model for pm2.5 explained by adi
+model_region <- data %>%
+  nest_by(CENSUS_REG) %>%
+  mutate(model = list(lm(PM2.5.ug_m3_LC ~ TRACT_ADI.ave, data = data))) %>%
+  summarise(tidy(model, conf.int = TRUE))
+model_region <- model_region %>% arrange(CENSUS_REG) %>% filter(term=="TRACT_ADI.ave") %>% mutate_if(is.numeric, signif, digits=2) %>% relocate(conf.low, .after= estimate) %>% relocate(conf.high, .after = conf.low)
+model_region
+```
 
-
-
+```{r}
+library(clipr)
+write_clip(model_region)
+```
 
 
 
