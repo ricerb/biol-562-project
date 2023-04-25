@@ -815,6 +815,9 @@ report(m5)
 
 # Byron's linear regression and logistic regression analysis updated 4/21
 
+## linear relationship between % race and PM2.5 concentrations
+
+### exploration
 
 ```{r}
 # linear model exploring unadjusted relationship between PM2.5 and proportion white
@@ -829,12 +832,47 @@ m2 <- lm(PM2.5.ug_m3_LC~PROP_WH.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12m
 summary(m2)
 ```
 ```{r}
+library(car)
+
+# pm2.5 explained by % black
 mb <- lm(PM2.5.ug_m3_LC~PROP_BLKAA.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent+log_POPDENS.ln_ppl_km2, data=data)
+
+# pm2.5 explained by % white
+mw <- lm(PM2.5.ug_m3_LC~PROP_WH.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent+log_POPDENS.ln_ppl_km2, data=data)
+
+# pm2.5 explained by % asian
+ma <- lm(PM2.5.ug_m3_LC~PROP_ASIAN.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent+log_POPDENS.ln_ppl_km2, data=data)
+```
+
+
+### % black
+
+```{r}
 summary(mb)
 mbt <- tidy(mb, conf.int = TRUE) %>% mutate_if(is.numeric, signif, digits=2)
-write_clip(mbt)
 mbt
+avPlot(mb, variable = "PROP_BLKAA.percent", xlab = "% black | others", ylab = "PM2.5 (ug/m^3)", main="")
 ```
+
+### % white
+
+```{r}
+summary(mw)
+mwt <- tidy(mw, conf.int = TRUE) %>% mutate_if(is.numeric, signif, digits=2)
+mwt
+avPlot(mw, variable = "PROP_WH.percent", xlab = "% white | others", ylab = "PM2.5 (ug/m^3)", main="")
+```
+
+### % asian
+
+```{r}
+summary(ma)
+mat <- tidy(ma, conf.int = TRUE) %>% mutate_if(is.numeric, signif, digits=2)
+mat
+avPlot(ma, variable = "PROP_ASIAN.percent", xlab = "% asian | others", ylab = "PM2.5 (ug/m^3)", main="")
+```
+
+
 
 ```{r}
 check_model(mb)
@@ -843,28 +881,17 @@ check_model(mb)
 ```{r}
 # mb grouped by region
 
-# Use the "group_by" function to group the data by region and fit a linear model for pm2.5 explained by adi
+# Use the "group_by" function to group the data by region and fit a linear model for pm2.5 explained by race
 mb_region <- data %>%
   nest_by(CENSUS_REG) %>%
   mutate(model = list(lm(PM2.5.ug_m3_LC~PROP_BLKAA.percent+PROP_BACHDEG_25.percent+PERCAPINCOME_12mo.2010USD+PROP_URBAN.percent+log_POPDENS.ln_ppl_km2, data = data))) %>%
   summarise(tidy(model, conf.int = TRUE))
 mb_region <- mb_region %>% filter(term=="PROP_BLKAA.percent") %>% arrange(CENSUS_REG) %>% mutate_if(is.numeric, signif, digits=2) %>% relocate(conf.low, .after= estimate) %>% relocate(conf.high, .after = conf.low)
 mb_region
-write_clip(mb_region)
+#write_clip(mb_region)
 ```
 
-```{r}
-hist(data$PROP_BLKAA.percent)
-```
-
-```{r}
-library(car)
-avPlot(mb, variable = "PROP_BLKAA.percent", xlab = "% black | others", ylab = "PM2.5 (ug/m^3)", main="Added-Variable Plot")
-```
-
-```{r}
-check_model(m2)
-```
+## Population-weighted mean PM2.5 concenrtations
 
 ```{r}
 # reshape data to calculate population-weighted averages
@@ -907,6 +934,7 @@ ggqqplot(data_long, "PM2.5.ug_m3_LC", facet.by = "racial_group")
 plot(m3, 1)
 ```
 
+## ANOVA (this didn't work; excluding for now)
 
 ```{r}
 m4 <- aov(PM2.5.ug_m3_LC~racial_group, data = data_long, weights = count.ppl)
@@ -918,6 +946,8 @@ summary(m4)
 
 TukeyHSD(m4)
 ```
+
+## Logistic regression: odds of high PM2.5 concentration, given increase in ADI score
 
 ```{r}
 library(report)
